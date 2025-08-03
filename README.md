@@ -72,7 +72,7 @@ python -m venv .venv
 ### Activate the virtual environment
 
 Windows: `.venv\Scripts\activate.bat`
-MacOS and Linux: `./venv/Scripts/activate`
+MacOS and Linux: `source ./.venv/bin/activate`
 
 ### Install pip-tools
 
@@ -140,3 +140,17 @@ python attachment_remover.py remove-attachments 123,456
 
 Note that by default, this command will run in "dry-run" mode, i.e. it will print the list of changes but will not actually do them.
 Pass the  --make_changes flag to actually make changes.
+
+##  Listing attachments
+
+Once the emails have been downloaded, the following command will list attachments in the Gmail inbox:
+
+```
+python attachment_remover.py list-attachments MESSAGE_ID[,MESSAGE_ID,MESSAGE_ID,...]
+```
+
+For example, if we wanted to list attachments for two messsages with ids 123 and 456, we'd call this:
+
+```
+python attachment_remover.py list-attachments 123,456
+```

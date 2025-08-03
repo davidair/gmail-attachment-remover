@@ -101,6 +101,24 @@ def fetch_email(service, email_address, message_id):
         file.write(raw_message)
     return decoded_message
 
+def list_attachments_in_message(original_message):
+    """
+    List attachments in an email, including their filenames and sizes in bytes.
+    """
+    attachments = []
+
+    for part in original_message.iter_attachments():
+        filename = part.get_filename()
+        payload = part.get_payload(decode=True)
+        size = len(payload) if payload else 0
+
+        attachments.append({
+            'filename': filename if filename else 'Unnamed attachment',
+            'size_bytes': size
+        })
+
+    return attachments
+
 
 def remove_attachments_from_message(original_message):
     """
@@ -170,6 +188,16 @@ def get_message_headers(message):
             continue
         headers.append(f"{key} = {message[key]}")
     return headers
+
+
+def list_email_attachments(service, email_address, message_id):
+    """
+    Lists attachments in an email
+    - Fetches the email (or uses local cache)
+    - Lists attachments
+    """
+    mail = fetch_email(service, email_address, message_id)
+    print(list_attachments_in_message(mail))
 
 
 def rewrite_email_stripping_attachments(service, email_address, message_id, make_changes):
@@ -260,9 +288,25 @@ def remove_attachments(message_ids, make_changes):
             service, email_address, id, make_changes)
 
 
+@click.command(help="Lists attachments in emails. Takes comma-separated list of message ids as input.")
+@click.argument('message_ids')
+def list_attachments(message_ids):
+    """
+    Lists attachments in messages specified by a list of ids.
+    """
+
+    service, email_address = get_service_and_email_address()
+
+    ids = message_ids.split(',')
+    for id in ids:
+        list_email_attachments(
+            service, email_address, id)
+
+
 cli.add_command(find_emails)
 cli.add_command(fetch_emails)
 cli.add_command(remove_attachments)
+cli.add_command(list_attachments)
 
 if __name__ == '__main__':
     cli()
