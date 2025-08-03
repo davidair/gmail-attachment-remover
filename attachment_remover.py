@@ -27,14 +27,29 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from pathlib import Path
 
 # Scopes for Gmail API
-SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
+SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 
 def sanitize(email_address):
     """
     Sanitizes email address to make it usable as a directory name.
     """
-    return re.sub(r'[<>:"/\\|?*@\.]', '_', email_address)
+    return re.sub(r'[<>:"/\\|?*@\.]', "_", email_address)
+
+
+def sanitize_path(filename):
+    """
+    Sanitize filename to be safe across macOS, Windows, and Linux.
+    Removes directory traversal and invalid characters.
+    """
+    # Remove directory traversal
+    filename = os.path.basename(filename)
+
+    # Replace unsafe characters
+    filename = re.sub(r'[<>:"/\\|?*\x00-\x1F]', '_', filename)
+
+    # Optional: trim overly long filenames
+    return filename[:255]
 
 
 def get_user_cache(email_address):
@@ -42,8 +57,9 @@ def get_user_cache(email_address):
     Create an email cache under local user directory.
     This also serves as backup for emails that end up being rewritten.
     """
-    cache_path = Path(os.path.expanduser("~")) / \
-        "cached_emails" / sanitize(email_address)
+    cache_path = (
+        Path(os.path.expanduser("~")) / "cached_emails" / sanitize(email_address)
+    )
     cache_path.mkdir(parents=True, exist_ok=True)
     return cache_path
 
@@ -66,9 +82,7 @@ def authenticate_gmail():
             creds.refresh(Request())
         else:
             print("Creating new signin flow...")
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json", SCOPES
-            )
+            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
             creds = flow.run_local_server(port=0)
         # Save the credentials for the next run
         with open("token.json", "w") as token:
@@ -76,7 +90,7 @@ def authenticate_gmail():
 
     if not creds:
         raise "Could not load credentials - check README.md for instructions"
-    return build('gmail', 'v1', credentials=creds)
+    return build("gmail", "v1", credentials=creds)
 
 
 def fetch_email(service, email_address, message_id):
@@ -89,17 +103,22 @@ def fetch_email(service, email_address, message_id):
 
     if cached_path.exists() and cached_path.is_file():
         print(f"Reading from cached location: {cached_path}")
-        with cached_path.open('rb') as file:
+        with cached_path.open("rb") as file:
             raw_message = file.read()
             return message_from_bytes(raw_message, policy=policy.default)
 
-    message = service.users().messages().get(
-        userId='me', id=message_id, format='raw').execute()
-    raw_message = urlsafe_b64decode(message['raw'])
+    message = (
+        service.users()
+        .messages()
+        .get(userId="me", id=message_id, format="raw")
+        .execute()
+    )
+    raw_message = urlsafe_b64decode(message["raw"])
     decoded_message = message_from_bytes(raw_message, policy=policy.default)
-    with cached_path.open('wb') as file:
+    with cached_path.open("wb") as file:
         file.write(raw_message)
     return decoded_message
+
 
 def list_attachments_in_message(original_message):
     """
@@ -112,12 +131,52 @@ def list_attachments_in_message(original_message):
         payload = part.get_payload(decode=True)
         size = len(payload) if payload else 0
 
-        attachments.append({
-            'filename': filename if filename else 'Unnamed attachment',
-            'size_bytes': size
-        })
+        attachments.append(
+            {
+                "filename": filename if filename else "Unnamed attachment",
+                "size_bytes": size,
+            }
+        )
 
     return attachments
+
+
+def extract_attachments_in_message(original_message, cached_message_attachments_directory):
+    """
+    Extract and save attachments from the email to the given directory,
+    ensuring sanitized and non-conflicting filenames.
+    """
+    # Keep track of filenames to handle duplicates
+    seen_filenames = {}
+
+    for part in original_message.iter_attachments():
+
+        # Create directory if needed
+        os.makedirs(cached_message_attachments_directory, exist_ok=True)
+
+        raw_filename = part.get_filename()
+        if not raw_filename:
+            continue  # Skip unnamed attachments
+
+        # Sanitize filename
+        clean_filename = sanitize_path(raw_filename)
+
+        # Handle duplicates by appending _1, _2 etc., respecting file extension
+        name, ext = os.path.splitext(clean_filename)
+        count = seen_filenames.get(clean_filename, 0)
+
+        if count > 0:
+            clean_filename = f"{name}_{count}{ext}"
+
+        seen_filenames[raw_filename] = count + 1
+
+        # Save to disk
+        filepath = os.path.join(cached_message_attachments_directory, clean_filename)
+        payload = part.get_payload(decode=True)
+        if payload:
+            print(f"Saving {filepath}")
+            with open(filepath, 'wb') as f:
+                f.write(payload)
 
 
 def remove_attachments_from_message(original_message):
@@ -125,16 +184,16 @@ def remove_attachments_from_message(original_message):
     Remove attachments from the email.
     """
     # Extract headers and body
-    email_body = original_message.get_body(preferencelist=('plain', 'html'))
+    email_body = original_message.get_body(preferencelist=("plain", "html"))
     email_text = email_body.get_content() if email_body else ""
 
     # Create a new email without attachments
     new_message = MIMEMultipart()
     for key in original_message.keys():
-        if key == 'Content-Type' or key == 'MIME-Version':
+        if key == "Content-Type" or key == "MIME-Version":
             continue
         new_message[key] = original_message[key]
-    new_message.attach(MIMEText(email_text, 'plain'))
+    new_message.attach(MIMEText(email_text, "plain"))
 
     return new_message
 
@@ -145,11 +204,12 @@ def reinsert_email(service, modified_message):
     """
     print(f"Reinserting the email")
     raw_message = urlsafe_b64encode(modified_message.as_bytes()).decode()
-    return service.users().messages().insert(
-        userId='me',
-        body={'raw': raw_message},
-        internalDateSource='dateHeader'
-    ).execute()
+    return (
+        service.users()
+        .messages()
+        .insert(userId="me", body={"raw": raw_message}, internalDateSource="dateHeader")
+        .execute()
+    )
 
 
 def delete_email(service, message_id):
@@ -158,7 +218,7 @@ def delete_email(service, message_id):
     Requires full scope: https://developers.google.com/gmail/api/auth/scopes
     """
     print(f"Deleting email with id = {message_id}")
-    service.users().messages().delete(userId='me', id=message_id).execute()
+    service.users().messages().delete(userId="me", id=message_id).execute()
 
 
 def trash_email(service, message_id):
@@ -166,15 +226,15 @@ def trash_email(service, message_id):
     Moves the specified email to the trash instead of permanently deleting it.
     """
     print(f"Trashing email with id = {message_id}")
-    service.users().messages().trash(userId='me', id=message_id).execute()
+    service.users().messages().trash(userId="me", id=message_id).execute()
 
 
 def find_messages(service, query):
     """
     Finds all messages matching a Gmail query.
     """
-    response = service.users().messages().list(userId='me', q=query).execute()
-    messages = response.get('messages', [])
+    response = service.users().messages().list(userId="me", q=query).execute()
+    messages = response.get("messages", [])
     return messages
 
 
@@ -184,7 +244,7 @@ def get_message_headers(message):
     """
     headers = []
     for key in message.keys():
-        if key not in ['Subject', 'Delivered-To', 'From', 'To', 'CC', 'Date']:
+        if key not in ["Subject", "Delivered-To", "From", "To", "CC", "Date"]:
             continue
         headers.append(f"{key} = {message[key]}")
     return headers
@@ -200,7 +260,22 @@ def list_email_attachments(service, email_address, message_id):
     print(list_attachments_in_message(mail))
 
 
-def rewrite_email_stripping_attachments(service, email_address, message_id, make_changes):
+def extract_email_attachments(service, email_address, message_id):
+    """
+    Extracts attachments in an email
+    - Fetches the email (or uses local cache)
+    - Saves every attachment under the local cache
+    """
+    mail = fetch_email(service, email_address, message_id)
+    user_cache = get_user_cache(email_address)
+    cached_message_attachments_directory = user_cache / Path(message_id)
+
+    extract_attachments_in_message(mail, cached_message_attachments_directory)
+
+
+def rewrite_email_stripping_attachments(
+    service, email_address, message_id, make_changes
+):
     """
     Rewrites the email stripping attachments:
     - Fetches the email (caching it locally, which can be used for backup purposes)
@@ -212,7 +287,8 @@ def rewrite_email_stripping_attachments(service, email_address, message_id, make
     updated_message = remove_attachments_from_message(mail)
     if not make_changes:
         print(
-            f"Would have remove attachments from {get_message_headers(updated_message)}")
+            f"Would have remove attachments from {get_message_headers(updated_message)}"
+        )
         print("To actually make changes, pass in the --make_changes flag")
         return
     trash_email(service, message_id)
@@ -225,8 +301,7 @@ def get_service_and_email_address():
     """
     service = authenticate_gmail()
     print("Fetching current user's address...")
-    email_address = service.users().getProfile(
-        userId='me').execute()['emailAddress']
+    email_address = service.users().getProfile(userId="me").execute()["emailAddress"]
     print(f"Address fetched: {email_address}")
     return (service, email_address)
 
@@ -239,9 +314,11 @@ def cli():
     pass
 
 
-@click.command(help="Finds messages given a Gmail query, such as 'has:attachment larger:20MB'")
-@click.argument('query')
-@click.option('--output-csv', '-o', is_flag=True, help='Output comma-separated IDs')
+@click.command(
+    help="Finds messages given a Gmail query, such as 'has:attachment larger:20MB'"
+)
+@click.argument("query")
+@click.option("--output-csv", "-o", is_flag=True, help="Output comma-separated IDs")
 def find_emails(query, output_csv):
     """
     Finds all message ids matching a query.
@@ -255,8 +332,10 @@ def find_emails(query, output_csv):
         click.echo(f"Query: {query}\nResults: {messages}")
 
 
-@click.command(help="Fetches emails and caches them locally. Takes comma-separated list of message ids.")
-@click.argument('message_ids')
+@click.command(
+    help="Fetches emails and caches them locally. Takes comma-separated list of message ids."
+)
+@click.argument("message_ids")
 def fetch_emails(message_ids):
     """
     Fetches all messages for a list of message ids.
@@ -264,7 +343,7 @@ def fetch_emails(message_ids):
 
     service, email_address = get_service_and_email_address()
 
-    ids = message_ids.split(',')
+    ids = message_ids.split(",")
     for id in ids:
         message = fetch_email(service, email_address, id)
         for header in get_message_headers(message):
@@ -272,9 +351,11 @@ def fetch_emails(message_ids):
         print()
 
 
-@click.command(help="Removes attachments from emails. Takes comma-separated list of message ids as input.")
-@click.argument('message_ids')
-@click.option('--make-changes', is_flag=True, help='Dry run mode (default: True)')
+@click.command(
+    help="Removes attachments from emails. Takes comma-separated list of message ids as input."
+)
+@click.argument("message_ids")
+@click.option("--make-changes", is_flag=True, help="Dry run mode (default: True)")
 def remove_attachments(message_ids, make_changes):
     """
     Removes attachments from messages specified by a list of ids.
@@ -282,14 +363,15 @@ def remove_attachments(message_ids, make_changes):
 
     service, email_address = get_service_and_email_address()
 
-    ids = message_ids.split(',')
+    ids = message_ids.split(",")
     for id in ids:
-        rewrite_email_stripping_attachments(
-            service, email_address, id, make_changes)
+        rewrite_email_stripping_attachments(service, email_address, id, make_changes)
 
 
-@click.command(help="Lists attachments in emails. Takes comma-separated list of message ids as input.")
-@click.argument('message_ids')
+@click.command(
+    help="Lists attachments in emails. Takes comma-separated list of message ids as input."
+)
+@click.argument("message_ids")
 def list_attachments(message_ids):
     """
     Lists attachments in messages specified by a list of ids.
@@ -297,16 +379,32 @@ def list_attachments(message_ids):
 
     service, email_address = get_service_and_email_address()
 
-    ids = message_ids.split(',')
+    ids = message_ids.split(",")
     for id in ids:
-        list_email_attachments(
-            service, email_address, id)
+        list_email_attachments(service, email_address, id)
+
+
+@click.command(
+    help="Extracts attachments from emails. Takes comma-separated list of message ids as input."
+)
+@click.argument("message_ids")
+def extract_attachments(message_ids):
+    """
+    Extracts attachments from messages specified by a list of ids and saves them in the cache directory.
+    """
+
+    service, email_address = get_service_and_email_address()
+
+    ids = message_ids.split(",")
+    for id in ids:
+        extract_email_attachments(service, email_address, id)
 
 
 cli.add_command(find_emails)
 cli.add_command(fetch_emails)
 cli.add_command(remove_attachments)
 cli.add_command(list_attachments)
+cli.add_command(extract_attachments)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     cli()

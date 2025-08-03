@@ -143,7 +143,7 @@ Pass the  --make_changes flag to actually make changes.
 
 ##  Listing attachments
 
-Once the emails have been downloaded, the following command will list attachments in the Gmail inbox:
+Once the emails have been downloaded, the following command will list attachments:
 
 ```
 python attachment_remover.py list-attachments MESSAGE_ID[,MESSAGE_ID,MESSAGE_ID,...]
@@ -153,4 +153,18 @@ For example, if we wanted to list attachments for two messsages with ids 123 and
 
 ```
 python attachment_remover.py list-attachments 123,456
+```
+
+##  Extracting attachments
+
+Once the emails have been downloaded, the following command will extract attachments as individual files:
+
+```
+python attachment_remover.py extract-attachments MESSAGE_ID[,MESSAGE_ID,MESSAGE_ID,...]
+```
+
+For example, if we wanted to extract attachments for two messsages with ids 123 and 456, we'd call this:
+
+```
+python attachment_remover.py extract-attachments 123,456
 ```
