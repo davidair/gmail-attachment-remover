@@ -58,7 +58,8 @@ def get_user_cache(email_address):
     This also serves as backup for emails that end up being rewritten.
     """
     cache_path = (
-        Path(os.path.expanduser("~")) / "cached_emails" / sanitize(email_address)
+        Path(os.path.expanduser("~")) /
+        "cached_emails" / sanitize(email_address)
     )
     cache_path.mkdir(parents=True, exist_ok=True)
     return cache_path
@@ -82,7 +83,8 @@ def authenticate_gmail():
             creds.refresh(Request())
         else:
             print("Creating new signin flow...")
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(
+                "credentials.json", SCOPES)
             creds = flow.run_local_server(port=0)
         # Save the credentials for the next run
         with open("token.json", "w") as token:
@@ -171,7 +173,8 @@ def extract_attachments_in_message(original_message, cached_message_attachments_
         seen_filenames[raw_filename] = count + 1
 
         # Save to disk
-        filepath = os.path.join(cached_message_attachments_directory, clean_filename)
+        filepath = os.path.join(
+            cached_message_attachments_directory, clean_filename)
         payload = part.get_payload(decode=True)
         if payload:
             print(f"Saving {filepath}")
@@ -301,7 +304,8 @@ def get_service_and_email_address():
     """
     service = authenticate_gmail()
     print("Fetching current user's address...")
-    email_address = service.users().getProfile(userId="me").execute()["emailAddress"]
+    email_address = service.users().getProfile(
+        userId="me").execute()["emailAddress"]
     print(f"Address fetched: {email_address}")
     return (service, email_address)
 
@@ -365,7 +369,8 @@ def remove_attachments(message_ids, make_changes):
 
     ids = message_ids.split(",")
     for id in ids:
-        rewrite_email_stripping_attachments(service, email_address, id, make_changes)
+        rewrite_email_stripping_attachments(
+            service, email_address, id, make_changes)
 
 
 @click.command(
@@ -400,11 +405,81 @@ def extract_attachments(message_ids):
         extract_email_attachments(service, email_address, id)
 
 
+@click.command(
+    help=(
+        "Dangerously and automatically remove attachments from all emails "
+        "matching a Gmail search query. Repeats the search after each batch "
+        "until no results remain or max iterations is reached.\n\n"
+        "Example:\n"
+        "  python attachment_remover.py dangerous-automatically-remove-attachments "
+        "'has:attachment larger:1MB' --max-iterations 150 --make-changes"
+    )
+)
+@click.argument("query")
+@click.option(
+    "--max-iterations",
+    default=100,
+    show_default=True,
+    help="Maximum number of search→process cycles to run."
+)
+@click.option(
+    "--make-changes",
+    is_flag=True,
+    help="Actually rewrite emails. If omitted, performs a dry run."
+)
+def dangerous_automatically_remove_attachments(query, max_iterations, make_changes):
+    """
+    Automatically repeats: find → fetch → strip attachments → repeat.
+    Stops when no more messages match the Gmail query or when max-iterations is reached.
+    """
+    service, email_address = get_service_and_email_address()
+
+    print(f"Starting dangerous automatic removal loop")
+    print(f"Query: {query}")
+    print(f"Max iterations: {max_iterations}")
+    print(f"Dry run: {not make_changes}")
+
+    for iteration in range(1, max_iterations + 1):
+        print("")
+        print("-----------------------------------------------------")
+        print(f"Iteration {iteration}/{max_iterations}")
+        print("-----------------------------------------------------")
+
+        # Step 1 — find matching emails
+        messages = find_messages(service, query)
+        if not messages:
+            print("No more messages matching query. Exiting.")
+            break
+
+        batch_ids = [m["id"] for m in messages]
+        print(f"Found {len(batch_ids)} messages")
+
+        # Step 2 — fetch (cached automatically)
+        for msg_id in batch_ids:
+            print(f"Fetching cached data for message {msg_id}")
+            fetch_email(service, email_address, msg_id)
+
+        # Step 3 — remove attachments
+        for msg_id in batch_ids:
+            print(f"Processing message {msg_id}")
+            rewrite_email_stripping_attachments(
+                service, email_address, msg_id, make_changes
+            )
+
+        # After processing one batch Gmail may need time to resync search indexes.
+        # Usually instant, but Gmail search sometimes lags milliseconds.
+        # Not sleeping by default; user can re-run with fewer concurrency worries.
+
+    print("Done.")
+
+
 cli.add_command(find_emails)
 cli.add_command(fetch_emails)
 cli.add_command(remove_attachments)
 cli.add_command(list_attachments)
 cli.add_command(extract_attachments)
+cli.add_command(dangerous_automatically_remove_attachments)
+
 
 if __name__ == "__main__":
     cli()

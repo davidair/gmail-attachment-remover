@@ -168,3 +168,14 @@ For example, if we wanted to extract attachments for two messsages with ids 123 
 ```
 python attachment_remover.py extract-attachments 123,456
 ```
+
+##  Automatically removing attachments
+
+The dangerous-automatically-remove-attachments command allows combining finding, fetchging and removing attachments:
+
+```
+python attachment_remover.py dangerous-automatically-remove-attachments "has:attachment larger:1MB"
+```
+
+Use --make-changes flag to actually remove attachments, otherwise it will find and fetch emails, but not to actual deletions.
+Note that this command won't work well without --make-changes, because the search part will always return the same emails.
