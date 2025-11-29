@@ -139,7 +139,7 @@ python attachment_remover.py remove-attachments 123,456
 ```
 
 Note that by default, this command will run in "dry-run" mode, i.e. it will print the list of changes but will not actually do them.
-Pass the  --make_changes flag to actually make changes.
+Pass the  --make-changes flag to actually make changes.
 
 ##  Listing attachments
 
